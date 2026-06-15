@@ -11,9 +11,7 @@ logger = logging.getLogger(__name__)
 
 SELECTING_TASK = 1
 CONFIRM_CREDENTIALS = 2
-AWAITING_USERNAME = 3
-AWAITING_PASSWORD = 4
-AWAITING_2FA = 5
+AWAITING_2FA = 3
 
 MAIN_MENU = ReplyKeyboardMarkup(
     [["📋 Tasks", "💰 Balance"], ["👫 Refer", "💸 Withdraw"], ["👤 Profile"]],
@@ -33,12 +31,10 @@ def get_task_system_enabled():
 
 
 def generate_username(task_type: str) -> str:
-    """Generate a unique random username for the platform account."""
     prefix = "ig" if task_type == "instagram" else "fb"
     chars = string.ascii_lowercase + string.digits
     suffix = "".join(random.choices(chars, k=8))
     candidate = f"{prefix}_{suffix}"
-    # Retry until unique (highly unlikely to collide but safe)
     while db.is_acc_username_taken(candidate):
         suffix = "".join(random.choices(chars, k=8))
         candidate = f"{prefix}_{suffix}"
@@ -101,7 +97,6 @@ async def task_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Please select a valid task from the list.")
         return SELECTING_TASK
 
-    # Generate unique username for this submission
     task_type = selected_task.get("task_type", "instagram")
     generated_username = generate_username(task_type)
     task_password = selected_task.get("task_password", "")
@@ -120,9 +115,12 @@ async def task_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📋 *Use these credentials to create your {platform} account:*\n\n"
         f"👤 Username: `{generated_username}`\n"
         f"🔑 Password: `{task_password}`\n\n"
-        f"Once you've created the account and set up 2FA, press *✅ I'm Ready* to submit.",
+        f"✅ Once you've created the account and enabled 2FA, press *I'm Ready* to submit your 2FA key.",
         parse_mode="Markdown",
-        reply_markup=ReplyKeyboardMarkup([["✅ I'm Ready"], ["❌ Cancel"]], resize_keyboard=True),
+        reply_markup=ReplyKeyboardMarkup(
+            [["✅ I'm Ready"], ["❌ Cancel"]],
+            resize_keyboard=True,
+        ),
     )
     return CONFIRM_CREDENTIALS
 
@@ -134,53 +132,16 @@ async def user_ready(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Cancelled.", reply_markup=MAIN_MENU)
         return ConversationHandler.END
 
-    if text != "✅ I'm Ready":
+    if "Ready" not in text and "ready" not in text:
+        await update.message.reply_text(
+            "Please press the *✅ I'm Ready* button when you have created the account.",
+            parse_mode="Markdown",
+        )
         return CONFIRM_CREDENTIALS
 
-    task = context.user_data.get("selected_task")
-    generated_username = context.user_data.get("generated_username")
-
     await update.message.reply_text(
-        f"✅ Great! Let's record your submission.\n\n"
-        f"*Step 1 of 3*\n\n"
-        f"👤 Enter the username you used for the account:\n"
-        f"_(Should be: `{generated_username}`)_",
-        parse_mode="Markdown",
-        reply_markup=ReplyKeyboardMarkup([["❌ Cancel"]], resize_keyboard=True),
-    )
-    return AWAITING_USERNAME
-
-
-async def receive_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "❌ Cancel":
-        await update.message.reply_text("Cancelled.", reply_markup=MAIN_MENU)
-        return ConversationHandler.END
-
-    context.user_data["submitted_username"] = update.message.text.strip()
-
-    task = context.user_data.get("selected_task", {})
-    task_password = task.get("task_password", "")
-
-    await update.message.reply_text(
-        f"*Step 2 of 3*\n\n"
-        f"🔑 Enter the password you used:\n"
-        f"_(Should be: `{task_password}`)_",
-        parse_mode="Markdown",
-        reply_markup=ReplyKeyboardMarkup([["❌ Cancel"]], resize_keyboard=True),
-    )
-    return AWAITING_PASSWORD
-
-
-async def receive_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "❌ Cancel":
-        await update.message.reply_text("Cancelled.", reply_markup=MAIN_MENU)
-        return ConversationHandler.END
-
-    context.user_data["submitted_password"] = update.message.text.strip()
-
-    await update.message.reply_text(
-        f"*Step 3 of 3*\n\n"
-        f"🔐 Enter your *2FA key* (the backup code or TOTP secret from your authenticator app):",
+        "🔐 *Step: Enter your 2FA Key*\n\n"
+        "Please enter the *2FA backup code* or *TOTP secret key* from your authenticator app:",
         parse_mode="Markdown",
         reply_markup=ReplyKeyboardMarkup([["❌ Cancel"]], resize_keyboard=True),
     )
@@ -194,23 +155,33 @@ async def receive_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = update.effective_user
     task = context.user_data.get("selected_task")
+
     if not task:
         await update.message.reply_text("Something went wrong. Please try again.", reply_markup=MAIN_MENU)
         return ConversationHandler.END
 
-    acc_username = context.user_data.get("submitted_username", "")
-    acc_password = context.user_data.get("submitted_password", "")
+    acc_username = context.user_data.get("generated_username", "")
+    acc_password = task.get("task_password", "")
     twofa_key = update.message.text.strip()
     task_type = task.get("task_type", "instagram")
+    tg_username = user.username or user.first_name or str(user.id)
 
+    # Immediately confirm receipt
+    await update.message.reply_text(
+        "✅ *Your report has been received!*\n\n"
+        "Please wait while our team verifies your account.\n"
+        "Your balance will be updated once the Live ID verification is complete. 🕐",
+        parse_mode="Markdown",
+        reply_markup=MAIN_MENU,
+    )
+
+    # Store submission
     sub_id = db.create_submission(
         user.id, task["task_id"], acc_username, acc_password, twofa_key
     )
     db.update_submission_status(sub_id, "approved", 0)
 
-    tg_username = user.username or user.first_name or str(user.id)
-
-    # Log to Google Sheets in real time
+    # Log to Google Sheet in real time
     try:
         logged = sheets.log_submission(
             user.id, tg_username, task["title"], task_type,
@@ -221,22 +192,11 @@ async def receive_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.warning(f"Sheet logging failed: {e}")
 
-    # Handle referral (mark complete but do NOT add balance yet — balance via live ID only)
+    # Mark referral as having completed a task (balance added via live ID only)
     referral = db.get_referral_by_referred(user.id)
     if referral and not referral.get("task_completed"):
-        db.mark_referral_completed(user.id, 0)  # bonus=0 until live ID confirms
+        db.mark_referral_completed(user.id, 0)
 
-    platform = "Instagram" if task_type == "instagram" else "Facebook"
-    await update.message.reply_text(
-        f"✅ *Submission Recorded!*\n\n"
-        f"Platform: {platform}\n"
-        f"Username: `{acc_username}`\n"
-        f"Task: *{task['title']}*\n"
-        f"Reward: `${task['reward']:.4f}`\n\n"
-        f"💡 Your balance will be updated once the admin verifies your account via Live ID report.",
-        parse_mode="Markdown",
-        reply_markup=MAIN_MENU,
-    )
     return ConversationHandler.END
 
 
@@ -248,12 +208,14 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 task_conv_handler = ConversationHandler(
     entry_points=[MessageHandler(filters.Regex("^📋 Tasks$"), show_tasks)],
     states={
-        SELECTING_TASK: [MessageHandler(filters.TEXT & ~filters.COMMAND, task_selected)],
-        CONFIRM_CREDENTIALS: [MessageHandler(filters.TEXT & ~filters.COMMAND, user_ready)],
-        AWAITING_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_username)],
-        AWAITING_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_password)],
-        AWAITING_2FA: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_2fa)],
+        SELECTING_TASK:       [MessageHandler(filters.TEXT & ~filters.COMMAND, task_selected)],
+        CONFIRM_CREDENTIALS:  [MessageHandler(filters.TEXT & ~filters.COMMAND, user_ready)],
+        AWAITING_2FA:         [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_2fa)],
     },
-    fallbacks=[CommandHandler("cancel", cancel), MessageHandler(filters.Regex("^❌ Cancel$"), cancel)],
+    fallbacks=[
+        CommandHandler("cancel", cancel),
+        CommandHandler("start", cancel),
+        MessageHandler(filters.Regex("^❌ Cancel$"), cancel),
+    ],
     allow_reentry=True,
 )
