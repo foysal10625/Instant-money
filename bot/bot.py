@@ -58,6 +58,8 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await cmd_withdrawstats(update, context)
     elif text == "💰 Fund Check":
         await cmd_fundcheck(update, context)
+    elif text == "🔛 Toggle Withdraw":
+        await cmd_toggle_withdraw(update, context)
     elif text == "🔙 Main Menu":
         await update.message.reply_text("Back to main menu.", reply_markup=MAIN_MENU)
 
@@ -149,7 +151,7 @@ def main():
     # Admin menu reply keyboard handlers
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.Regex(
-            "^(📋 List Tasks|📊 Task Stats|👥 User Stats|💸 Withdraw Stats|💰 Fund Check|🔙 Main Menu)$"
+            "^(📋 List Tasks|📊 Task Stats|👥 User Stats|💸 Withdraw Stats|💰 Fund Check|🔛 Toggle Withdraw|🔙 Main Menu)$"
         ),
         handle_admin_menu,
     ))

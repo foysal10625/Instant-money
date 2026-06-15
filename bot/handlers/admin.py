@@ -16,7 +16,9 @@ ADMIN_MENU = ReplyKeyboardMarkup(
         ["🗑 Delete Task", "📊 Task Stats"],
         ["👥 User Stats", "💸 Withdraw Stats"],
         ["💰 Fund Check", "📡 Live Report"],
-        ["📥 Download Sheet", "🔙 Main Menu"],
+        ["📥 Download Sheet", "🔄 Balance Reset"],
+        ["💵 Set Min Withdraw", "🔛 Toggle Withdraw"],
+        ["🔙 Main Menu"],
     ],
     resize_keyboard=True,
 )
@@ -814,7 +816,10 @@ livereport_conv = ConversationHandler(
 )
 
 balreset_conv = ConversationHandler(
-    entry_points=[CommandHandler("balreset", start_balreset)],
+    entry_points=[
+        CommandHandler("balreset", start_balreset),
+        MessageHandler(filters.Regex("^🔄 Balance Reset$"), start_balreset),
+    ],
     states={
         BALRESET_USERID: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_balreset_userid)],
     },
@@ -823,7 +828,10 @@ balreset_conv = ConversationHandler(
 )
 
 set_min_withdraw_conv = ConversationHandler(
-    entry_points=[CommandHandler("setminwithdraw", start_set_min_withdraw)],
+    entry_points=[
+        CommandHandler("setminwithdraw", start_set_min_withdraw),
+        MessageHandler(filters.Regex("^💵 Set Min Withdraw$"), start_set_min_withdraw),
+    ],
     states={
         SET_MIN_WITHDRAW: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_min_withdraw)],
     },
