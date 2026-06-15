@@ -1,0 +1,152 @@
+## 📢 BROADCAST SYSTEM
+- Admin/Owner can use /broadcast
+- Bot asks for:
+  - text message
+  - or photo + caption
+- Sends to all registered users
+- Shows:
+  - sent count
+  - failed count
+---
+
+## 🚫 BAN / UNBAN SYSTEM
+- /ban <user_id> → bans user
+- /unban <user_id> → unbans user
+- Banned users cannot interact with the bot
+- Banned users see a ban message when trying to use the bot
+
+---
+
+## 📊 ADMIN REPORTS
+- /taskstats → show how many tasks each user completed
+- /userstats → show user balance, referrals, withdrawals, and task count
+- /withdrawstats → show pending/approved/rejected withdrawals
+- /fundcheck → show whether bot has enough fund for pending withdrawals
+
+---
+
+## 🗄️ DATABASE
+Use SQLite for simplicity.
+
+### Tables:
+- users
+  - user_id
+  - username
+  - balance
+  - referral_bonus
+  - is_banned
+  - joined_at
+
+- tasks
+  - task_id
+  - title
+  - description
+  - reward
+  - created_by
+  - is_active
+
+- submissions
+  - submission_id
+  - user_id
+  - task_id
+  - proof
+  - status
+  - approved_by
+  - approved_at
+  - sheet_logged
+
+- withdrawals
+  - withdrawal_id
+  - user_id
+  - amount
+  - payment_method
+  - account_details
+  - status
+  - approved_by
+  - processed_at
+
+- referrals
+  - referral_id
+  - referrer_id
+  - referred_id
+  - bonus_earned
+  - task_completed
+
+- transactions
+  - transaction_id
+  - user_id
+  - type
+  - amount
+  - description
+  - timestamp
+
+- live_id_matches
+  - match_id
+  - user_id
+  - live_id
+  - bonus_added
+  - report_date
+
+---
+
+## ⚙️ CONFIGURATION
+All configs must be in config.py:
+- BOT_TOKEN
+- OWNER_ID
+- ADMIN_IDS
+- GOOGLE_SHEET_ID
+- GOOGLE_SHEET_CREDENTIALS
+- MIN_WITHDRAW
+- TASK_SYSTEM_ENABLED
+- LIVE_ID_BONUS_PER_ID
+- WITHDRAW_METHODS
+- ADMIN_CAN_CREATE_TASKS
+- OWNER_CAN_TOGGLE_TASKS
+
+---
+
+## 📁 FILE STRUCTURE
+bot/
+├── bot.py
+├── config.py
+├── database.py
+├── sheets.py
+├── requirements.txt
+├── Dockerfile
+└── handlers/
+    ├── user.py
+    ├── admin.py
+    ├── tasks.py
+    ├── withdraw.py
+    ├── refer.py
+    └── broadcast.py
+
+---
+
+## 🔧 TECHNICAL REQUIREMENTS
+- Use python-telegram-bot v20+ with async handlers
+- Use reply keyboard buttons for menus and task selection
+- Use inline buttons only if needed for admin approval/reject
+- Fully deploy-ready for Render.com
+- Use Python 3.11
+- Include proper error handling
+- Ensure bot restarts safely
+- Ensure database initializes automatically
+- Ensure Google Sheets logging works
+- Ensure live ID matching works automatically
+- Ensure referral tracking works
+- Ensure withdraw workflow works properly
+
+---
+
+## ✅ DELIVERABLES
+Generate complete working code for:
+1. bot.py
+2. config.py
+3. database.py
+4. sheets.py
+5. all handler files
+6. requirements.txt
+7. Dockerfile
+
+Make the code clean, production-ready, and modular. Ensure the reply keyboard UI behaves exactly like a custom Telegram keyboard menu, not inline buttons.

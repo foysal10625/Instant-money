@@ -1,0 +1,148 @@
+You are an expert Telegram bot developer. Build a fully functional Telegram bot with the following features:
+
+---
+
+## 🤖 BOT NAME: Task Reward Bot
+
+---
+
+## 👥 USER ROLES
+- Owner: Full control over everything, can ban/unban admins, toggle task system, manage funds, and view all reports.
+- Admin: Can manage tasks, users, broadcast, ban/unban, approve/reject withdrawals, view stats.
+- User: Can complete tasks, refer others, withdraw earnings, view balance and profile.
+
+---
+
+## ✅ IMPORTANT UI REQUIREMENT
+- Use REPLY KEYBOARD buttons (Telegram custom keyboard), NOT inline keyboards, for all normal user-facing menu and task selection options.
+- Reply keyboard buttons should appear like the attached screenshot, below the message box.
+- Inline keyboards may be used only for admin approval/reject actions if absolutely necessary, but all main menus must use reply keyboards.
+
+### Reply keyboard examples:
+- 📋 Tasks
+- 💰 Balance
+- 👫 Refer
+- 💸 Withdraw
+- 👤 Profile
+- ❌ Cancel
+- 🔙 Back
+
+### Task selection example:
+- 📱 Create Inst (2FA) ($0.0200)
+- 📘 Create Facebook Account ($0.0300)
+- 📸 Create Instagram Account ($0.0250)
+- ❌ Cancel
+
+---
+
+## ✅ TASK SYSTEM
+- Owner/Admin can create tasks anytime via bot with:
+  - title
+  - description
+  - reward amount
+- Owner can toggle task system ON/OFF globally
+- Task list must be shown using REPLY KEYBOARD buttons
+- When user selects a task button:
+  - bot sends task details
+  - bot asks user to submit proof
+- User submits proof as screenshot or ID
+- Admin receives notification with:
+  - user info
+  - task info
+  - proof
+- Admin approves/rejects the submission
+- On approval:
+  - reward is added to user balance
+  - task is logged automatically to Google Sheets
+
+### Auto sheet logging:
+- Every approved task is automatically saved to Google Sheets
+- Columns:
+  - User ID
+  - Username
+  - Task Name
+  - Reward
+  - Date
+  - Status
+
+---
+
+## 📡 LIVE ID REPORT SYSTEM
+- Admin/Owner sends /livereport
+- Bot asks admin to upload a file or sheet containing Live IDs
+- Supported formats:
+  - Google Sheet export
+  - CSV
+  - XLSX
+  - plain text list
+- Bot automatically:
+  1. reads all live IDs from uploaded file
+  2. reads all IDs from approved task records / sheet
+  3. compares and finds matches
+  4. identifies which user submitted each matched live ID
+  5. adds bonus balance to matched users automatically
+
+### Live ID bonus logic:
+- Configurable bonus per matched ID
+- Bonus amount stored in config.py
+- Bot sends admin a summary:
+  - total live IDs found
+  - total matched IDs
+  - matched users
+  - bonus added to each user
+  - unmatched IDs count
+
+---
+
+## 💰 BALANCE SYSTEM
+- Every user has a balance stored in database
+- Balance increases on:
+  - approved task reward
+  - live ID bonus
+  - referral bonus
+- /balance command shows:
+  - main balance
+  - referral bonus
+  - total balance
+
+---
+
+## 💸 WITHDRAW SYSTEM
+- User sends /withdraw
+- Bot asks for:
+  1. amount
+  2. payment method
+  3. account details
+- Supported withdraw methods only:
+  - USD BEP20
+  - bKash Personal Number
+- Minimum withdraw limit configurable by admin
+- Withdraw request goes to admin for approval
+- Admin can approve/reject withdraw requests
+- Admin can reject if there is not enough fund
+- User receives status notification
+
+---
+
+## 👫 REFER SYSTEM
+- Each user gets a unique referral link via /refer
+- When a referred user joins and completes a task:
+  - referrer earns 20% of that task reward
+- Referral bonus stored separately
+- /balance shows referral bonus separately
+- /profile shows referral count and referral earnings
+
+---
+
+## 🚫 FAKE REFERRAL DETECTION
+- Bot tracks referral activity
+- If referred users never complete tasks, mark referral source as suspicious
+- Admin gets a /fakerefer report showing:
+  - user ID
+  - username
+  - total referrals
+  - completed referrals
+  - fake mark status
+- Admin can ban suspicious fake-referral users manually using /ban
+
+---
