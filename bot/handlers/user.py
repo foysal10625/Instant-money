@@ -42,7 +42,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     await update.message.reply_text(
-        f"👋 Welcome, {user.first_name}!\n\nUse the menu below to get started.",
+        f"👋 Welcome to *Instant Money Bux*, {user.first_name}!\n\n"
+        f"Complete tasks, refer friends, and earn real money! 💸\n\n"
+        f"Use the menu below to get started:",
+        parse_mode="Markdown",
         reply_markup=MAIN_MENU,
     )
 

@@ -31,10 +31,10 @@ def _get_sheet():
         gc = gspread.authorize(creds)
         sh = gc.open_by_key(GOOGLE_SHEET_ID)
         try:
-            ws = sh.worksheet("Task Approvals")
+            ws = sh.worksheet("Task Submissions")
         except Exception:
-            ws = sh.add_worksheet(title="Task Approvals", rows=1000, cols=10)
-            ws.append_row(["User ID", "Username", "Task Name", "Reward", "Date", "Status"])
+            ws = sh.add_worksheet(title="Task Submissions", rows=5000, cols=10)
+            ws.append_row(["User ID", "Username", "Task Name", "Reward", "Proof / ID", "Date", "Status"])
         _sheet = ws
         return _sheet
     except Exception as e:
@@ -42,7 +42,7 @@ def _get_sheet():
         return None
 
 
-def log_approved_task(user_id: int, username: str, task_name: str, reward: float, status: str = "approved"):
+def log_approved_task(user_id: int, username: str, task_name: str, reward: float, proof: str = "", status: str = "approved"):
     ws = _get_sheet()
     if ws is None:
         return False
@@ -52,6 +52,7 @@ def log_approved_task(user_id: int, username: str, task_name: str, reward: float
             username or "",
             task_name,
             reward,
+            proof or "",
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             status,
         ])

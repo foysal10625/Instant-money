@@ -1,18 +1,14 @@
 import logging
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ContextTypes, ConversationHandler, CommandHandler, MessageHandler, filters, CallbackQueryHandler
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import ContextTypes, ConversationHandler, CommandHandler, MessageHandler, filters
 import database as db
 import sheets
-from config import OWNER_ID, ADMIN_IDS, TASK_SYSTEM_ENABLED, REFERRAL_BONUS_PERCENT
+from config import OWNER_ID, ADMIN_IDS, REFERRAL_BONUS_PERCENT
 
 logger = logging.getLogger(__name__)
 
 SELECTING_TASK = 1
 AWAITING_PROOF = 2
-
-CREATE_TITLE = 10
-CREATE_DESC = 11
-CREATE_REWARD = 12
 
 MAIN_MENU = ReplyKeyboardMarkup(
     [["📋 Tasks", "💰 Balance"], ["👫 Refer", "💸 Withdraw"], ["👤 Profile"]],
@@ -38,7 +34,7 @@ async def show_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not get_task_system_enabled():
         await update.message.reply_text(
-            "⚠️ The task system is currently disabled by the owner.",
+            "⚠️ The task system is currently disabled. Check back later!",
             reply_markup=MAIN_MENU,
         )
         return ConversationHandler.END
@@ -56,7 +52,7 @@ async def show_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buttons.append(["❌ Cancel"])
 
     await update.message.reply_text(
-        "📋 *Available Tasks*\n\nSelect a task to begin:",
+        "📋 *Available Tasks*\n\nSelect a task to complete:",
         parse_mode="Markdown",
         reply_markup=ReplyKeyboardMarkup(buttons, resize_keyboard=True),
     )
@@ -87,7 +83,7 @@ async def task_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📌 *{selected_task['title']}*\n\n"
         f"{selected_task.get('description', 'No description.')}\n\n"
         f"💰 Reward: `${selected_task['reward']:.4f}`\n\n"
-        f"📸 Please submit your proof (screenshot or ID). Send it as an image or paste text/ID:",
+        f"📸 Submit your proof (screenshot, ID, or text):",
         parse_mode="Markdown",
         reply_markup=ReplyKeyboardMarkup([["❌ Cancel"]], resize_keyboard=True),
     )
@@ -124,164 +120,50 @@ async def receive_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     sub_id = db.create_submission(user.id, task["task_id"], proof)
 
-    admins_to_notify = [OWNER_ID] + ADMIN_IDS
+    db.update_submission_status(sub_id, "approved", 0)
+    reward = task["reward"]
+    db.update_user_balance(user.id, reward, "balance")
+    db.add_transaction(user.id, "task_reward", reward, f"Task: {task['title']}")
 
-    username = f"@{user.username}" if user.username else user.first_name
-    caption = (
-        f"📬 *New Task Submission*\n\n"
-        f"User: {username} (`{user.id}`)\n"
-        f"Task: *{task['title']}*\n"
-        f"Reward: `${task['reward']:.4f}`\n"
-        f"Proof Type: {proof_type}\n"
-        f"Submission ID: `{sub_id}`"
-    )
+    u = db.get_user(user.id)
+    username = user.username or user.first_name or str(user.id)
 
-    approve_btn = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("✅ Approve", callback_data=f"approve_{sub_id}"),
-            InlineKeyboardButton("❌ Reject", callback_data=f"reject_{sub_id}"),
-        ]
-    ])
+    try:
+        logged = sheets.log_approved_task(
+            user.id,
+            username,
+            task["title"],
+            reward,
+            proof if proof_type == "text" else proof_type,
+        )
+        if logged:
+            db.mark_submission_logged(sub_id)
+    except Exception as e:
+        logger.warning(f"Sheet logging failed: {e}")
 
-    bot = context.bot
-    for admin_id in set(admins_to_notify):
+    referral = db.get_referral_by_referred(user.id)
+    if referral and not referral.get("task_completed"):
+        bonus = round(reward * REFERRAL_BONUS_PERCENT / 100, 6)
+        db.update_user_balance(referral["referrer_id"], bonus, "referral_bonus")
+        db.mark_referral_completed(user.id, bonus)
+        db.add_transaction(referral["referrer_id"], "referral_bonus", bonus, f"Referral bonus from {user.id}")
         try:
-            if proof_type == "photo":
-                await bot.send_photo(
-                    chat_id=admin_id,
-                    photo=proof,
-                    caption=caption,
-                    parse_mode="Markdown",
-                    reply_markup=approve_btn,
-                )
-            elif proof_type == "document":
-                await bot.send_document(
-                    chat_id=admin_id,
-                    document=proof,
-                    caption=caption,
-                    parse_mode="Markdown",
-                    reply_markup=approve_btn,
-                )
-            else:
-                await bot.send_message(
-                    chat_id=admin_id,
-                    text=caption + f"\n\nProof: `{proof}`",
-                    parse_mode="Markdown",
-                    reply_markup=approve_btn,
-                )
-        except Exception as e:
-            logger.warning(f"Could not notify admin {admin_id}: {e}")
+            await context.bot.send_message(
+                referral["referrer_id"],
+                f"🎉 Your referred user completed a task!\nYou earned `${bonus:.4f}` referral bonus.",
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
 
     await update.message.reply_text(
-        "✅ Your proof has been submitted! Admins will review it shortly.",
+        f"✅ *Task Completed!*\n\n"
+        f"Task: *{task['title']}*\n"
+        f"💰 `${reward:.4f}` has been added to your balance instantly!",
+        parse_mode="Markdown",
         reply_markup=MAIN_MENU,
     )
     return ConversationHandler.END
-
-
-async def handle_submission_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    admin_id = query.from_user.id
-    if not is_admin(admin_id):
-        await query.answer("Not authorized.", show_alert=True)
-        return
-
-    data = query.data
-    if data.startswith("approve_"):
-        sub_id = int(data.split("_")[1])
-        action = "approve"
-    elif data.startswith("reject_"):
-        sub_id = int(data.split("_")[1])
-        action = "reject"
-    else:
-        return
-
-    sub = db.get_submission(sub_id)
-    if not sub:
-        await query.edit_message_caption(caption="❌ Submission not found.")
-        return
-
-    if sub["status"] != "pending":
-        await query.answer(f"Already {sub['status']}.", show_alert=True)
-        return
-
-    task = db.get_task(sub["task_id"])
-    user = db.get_user(sub["user_id"])
-
-    if action == "approve":
-        db.update_submission_status(sub_id, "approved", admin_id)
-        reward = task["reward"]
-        db.update_user_balance(sub["user_id"], reward, "balance")
-        db.add_transaction(sub["user_id"], "task_reward", reward, f"Task: {task['title']}")
-
-        referral = db.get_referral_by_referred(sub["user_id"])
-        if referral and not referral.get("task_completed"):
-            bonus = round(reward * REFERRAL_BONUS_PERCENT / 100, 6)
-            db.update_user_balance(referral["referrer_id"], bonus, "referral_bonus")
-            db.mark_referral_completed(sub["user_id"], bonus)
-            db.add_transaction(referral["referrer_id"], "referral_bonus", bonus, f"Referral bonus for {sub['user_id']}")
-            try:
-                await context.bot.send_message(
-                    referral["referrer_id"],
-                    f"🎉 Your referred user completed a task! You earned `${bonus:.4f}` referral bonus.",
-                    parse_mode="Markdown",
-                )
-            except Exception:
-                pass
-
-        try:
-            logged = sheets.log_approved_task(
-                sub["user_id"],
-                user.get("username", ""),
-                task["title"],
-                reward,
-            )
-            if logged:
-                db.mark_submission_logged(sub_id)
-        except Exception as e:
-            logger.warning(f"Sheet logging failed: {e}")
-
-        try:
-            await context.bot.send_message(
-                sub["user_id"],
-                f"✅ Your submission for *{task['title']}* was approved!\n💰 `${reward:.4f}` added to your balance.",
-                parse_mode="Markdown",
-            )
-        except Exception:
-            pass
-
-        new_caption = query.message.caption or query.message.text or ""
-        new_caption += f"\n\n✅ *Approved* by admin `{admin_id}`"
-        try:
-            if query.message.caption is not None:
-                await query.edit_message_caption(caption=new_caption, parse_mode="Markdown")
-            else:
-                await query.edit_message_text(text=new_caption, parse_mode="Markdown")
-        except Exception:
-            pass
-
-    else:
-        db.update_submission_status(sub_id, "rejected", admin_id)
-        try:
-            await context.bot.send_message(
-                sub["user_id"],
-                f"❌ Your submission for *{task['title']}* was rejected. Please try again with valid proof.",
-                parse_mode="Markdown",
-            )
-        except Exception:
-            pass
-
-        new_caption = query.message.caption or query.message.text or ""
-        new_caption += f"\n\n❌ *Rejected* by admin `{admin_id}`"
-        try:
-            if query.message.caption is not None:
-                await query.edit_message_caption(caption=new_caption, parse_mode="Markdown")
-            else:
-                await query.edit_message_text(text=new_caption, parse_mode="Markdown")
-        except Exception:
-            pass
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):

@@ -2,7 +2,7 @@ import logging
 import csv
 import io
 from datetime import datetime
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InputFile
 from telegram.ext import ContextTypes, ConversationHandler, CommandHandler, MessageHandler, filters
 import database as db
 import sheets
@@ -12,7 +12,8 @@ logger = logging.getLogger(__name__)
 
 ADMIN_MENU = ReplyKeyboardMarkup(
     [["➕ Create Task", "📋 List Tasks"], ["📊 Task Stats", "👥 User Stats"],
-     ["💸 Withdraw Stats", "💰 Fund Check"], ["📡 Live Report", "🔙 Main Menu"]],
+     ["💸 Withdraw Stats", "💰 Fund Check"], ["📡 Live Report", "📥 Download Sheet"],
+     ["🔙 Main Menu"]],
     resize_keyboard=True,
 )
 
@@ -39,7 +40,53 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("❌ Not authorized.")
         return
-    await update.message.reply_text("🛠 *Admin Panel*\n\nChoose an action:", parse_mode="Markdown", reply_markup=ADMIN_MENU)
+    await update.message.reply_text(
+        "🛠 *Instant Money Bux — Admin Panel*\n\nChoose an action:",
+        parse_mode="Markdown",
+        reply_markup=ADMIN_MENU,
+    )
+
+
+async def cmd_downloadsheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Not authorized.")
+        return
+
+    await update.message.reply_text("⏳ Generating sheet, please wait...")
+
+    subs = db.get_approved_submissions()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Submission ID", "User ID", "Username", "Task Name", "Reward ($)", "Proof / ID", "Date"])
+
+    for s in subs:
+        writer.writerow([
+            s.get("submission_id", ""),
+            s.get("user_id", ""),
+            s.get("username", ""),
+            s.get("title", ""),
+            f"{s.get('reward', 0):.4f}",
+            s.get("proof", ""),
+            s.get("approved_at", ""),
+        ])
+
+    output.seek(0)
+    csv_bytes = output.getvalue().encode("utf-8")
+
+    filename = f"instant_money_bux_tasks_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+
+    await update.message.reply_document(
+        document=InputFile(io.BytesIO(csv_bytes), filename=filename),
+        caption=(
+            f"📥 *Task Submissions Sheet*\n\n"
+            f"Total records: `{len(subs)}`\n"
+            f"Generated: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`\n\n"
+            f"Use this CSV to check Live IDs against the Proof/ID column."
+        ),
+        parse_mode="Markdown",
+        reply_markup=ADMIN_MENU,
+    )
 
 
 async def cmd_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -66,7 +113,7 @@ async def cmd_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🚫 User `{target_id}` has been banned.", parse_mode="Markdown")
 
     try:
-        await context.bot.send_message(target_id, "🚫 You have been banned from this bot.")
+        await context.bot.send_message(target_id, "🚫 You have been banned from Instant Money Bux.")
     except Exception:
         pass
 
@@ -91,7 +138,7 @@ async def cmd_unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ User `{target_id}` has been unbanned.", parse_mode="Markdown")
 
     try:
-        await context.bot.send_message(target_id, "✅ You have been unbanned. You can use the bot again.")
+        await context.bot.send_message(target_id, "✅ You have been unbanned. Welcome back to Instant Money Bux!")
     except Exception:
         pass
 
@@ -113,7 +160,7 @@ async def cmd_taskstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     stats = db.get_all_task_stats()
     if not stats:
-        await update.message.reply_text("No data.")
+        await update.message.reply_text("No data yet.")
         return
 
     lines = ["📊 *Task Completion Stats*\n"]
@@ -142,7 +189,7 @@ async def cmd_userstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         wds = db.get_user_withdrawals(u["user_id"])
         total_bal = u.get("balance", 0) + u.get("referral_bonus", 0)
         lines.append(
-            f"{name}: bal=`${total_bal:.4f}` refs=`{len(refs)}` tasks=`{tasks}` withdrawals=`{len(wds)}`"
+            f"{name}: bal=`${total_bal:.4f}` refs=`{len(refs)}` tasks=`{tasks}` wds=`{len(wds)}`"
         )
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
@@ -174,10 +221,8 @@ async def cmd_fundcheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     all_w = db.get_all_withdraw_stats()
     pending_total = sum(w["amount"] for w in all_w if w["status"] == "pending")
-
     all_users = db.get_all_users()
     total_balances = sum(u.get("balance", 0) + u.get("referral_bonus", 0) for u in all_users)
-
     approved_total = sum(w["amount"] for w in all_w if w["status"] == "approved")
 
     await update.message.reply_text(
@@ -206,7 +251,7 @@ async def cmd_fakerefer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(referrals) > 3 and completed == 0:
             name = f"@{u['username']}" if u.get("username") else str(u["user_id"])
             lines.append(
-                f"⚠️ {name} (`{u['user_id']}`): {len(referrals)} referrals, {completed} completed — SUSPICIOUS"
+                f"⚠️ {name} (`{u['user_id']}`): {len(referrals)} refs, {completed} completed — SUSPICIOUS"
             )
 
     if len(lines) == 1:
@@ -314,7 +359,10 @@ async def start_livereport(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     await update.message.reply_text(
-        "📡 *Live ID Report*\n\nPlease upload a file containing Live IDs (CSV, XLSX, TXT, or plain text list).\nEach ID should be on a separate line or comma-separated.",
+        "📡 *Live ID Report*\n\n"
+        "Upload a file with Live IDs (CSV, XLSX, or TXT).\n"
+        "The bot will compare them against submitted proofs and auto-add bonuses to matched users.\n\n"
+        "💡 *Tip:* Download the task sheet first (`📥 Download Sheet`) to see all submitted IDs.",
         parse_mode="Markdown",
         reply_markup=ReplyKeyboardMarkup([["❌ Cancel"]], resize_keyboard=True),
     )
@@ -342,13 +390,13 @@ async def receive_livereport_file(update: Update, context: ContextTypes.DEFAULT_
                     if cell:
                         live_ids.add(str(cell).strip())
         except Exception:
-            reader = csv.reader(io.StringIO(content))
+            import csv as _csv
+            reader = _csv.reader(io.StringIO(content))
             for row in reader:
                 for cell in row:
                     cell = cell.strip()
                     if cell:
                         live_ids.add(cell)
-
             if not live_ids:
                 for line in content.splitlines():
                     line = line.strip()
@@ -363,7 +411,7 @@ async def receive_livereport_file(update: Update, context: ContextTypes.DEFAULT_
                     live_ids.add(part)
 
     if not live_ids:
-        await update.message.reply_text("❌ No IDs found in the file. Try again.")
+        await update.message.reply_text("❌ No IDs found. Try again.")
         return LIVE_REPORT_FILE
 
     approved_proof_ids = db.get_approved_proof_ids()
@@ -383,27 +431,28 @@ async def receive_livereport_file(update: Update, context: ContextTypes.DEFAULT_
     for user_id, info in matched_users.items():
         bonus = bonus_per_id * len(info["ids"])
         db.update_user_balance(user_id, bonus, "balance")
-        db.add_transaction(user_id, "live_id_bonus", bonus, f"Live ID match bonus")
+        db.add_transaction(user_id, "live_id_bonus", bonus, "Live ID match bonus")
         total_bonus_given += bonus
         for lid in info["ids"]:
             db.add_live_id_match(user_id, lid, bonus_per_id)
         try:
             await context.bot.send_message(
                 user_id,
-                f"🎉 Your Live ID was matched! Bonus added: `${bonus:.4f}`",
+                f"🎉 Your Live ID was matched!\nBonus added: `${bonus:.4f}`",
                 parse_mode="Markdown",
             )
         except Exception:
             pass
 
+    total_matched = sum(len(info["ids"]) for info in matched_users.values())
     summary_lines = [
-        f"📡 *Live ID Report Summary*\n",
-        f"Total live IDs uploaded: `{len(live_ids)}`",
-        f"Total matched IDs: `{len([i for info in matched_users.values() for i in info['ids']])}`",
+        "📡 *Live ID Report Summary*\n",
+        f"Live IDs uploaded: `{len(live_ids)}`",
+        f"Matched IDs: `{total_matched}`",
         f"Matched users: `{len(matched_users)}`",
         f"Bonus per ID: `${bonus_per_id:.4f}`",
         f"Total bonus distributed: `${total_bonus_given:.4f}`",
-        f"Unmatched IDs: `{len(live_ids) - len([i for info in matched_users.values() for i in info['ids']])}`",
+        f"Unmatched IDs: `{len(live_ids) - total_matched}`",
     ]
 
     if matched_users:

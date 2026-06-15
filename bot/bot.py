@@ -17,13 +17,13 @@ from telegram.ext import (
 import database as db
 from config import BOT_TOKEN, OWNER_ID
 from handlers.user import cmd_start, cmd_balance, cmd_profile, cmd_refer, handle_menu_text
-from handlers.tasks import task_conv_handler, handle_submission_callback
+from handlers.tasks import task_conv_handler
 from handlers.withdraw import withdraw_conv_handler, handle_withdrawal_callback
 from handlers.broadcast import broadcast_conv
 from handlers.admin import (
     cmd_admin, cmd_ban, cmd_unban, cmd_toggle_tasks,
     cmd_taskstats, cmd_userstats, cmd_withdrawstats, cmd_fundcheck,
-    cmd_fakerefer, cmd_list_tasks, cmd_deltask,
+    cmd_fakerefer, cmd_list_tasks, cmd_deltask, cmd_downloadsheet,
     create_task_conv, livereport_conv,
 )
 
@@ -32,12 +32,6 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
-
-ADMIN_MENU = ReplyKeyboardMarkup(
-    [["➕ Create Task", "📋 List Tasks"], ["📊 Task Stats", "👥 User Stats"],
-     ["💸 Withdraw Stats", "💰 Fund Check"], ["📡 Live Report", "🔙 Main Menu"]],
-    resize_keyboard=True,
-)
 
 MAIN_MENU = ReplyKeyboardMarkup(
     [["📋 Tasks", "💰 Balance"], ["👫 Refer", "💸 Withdraw"], ["👤 Profile"]],
@@ -48,17 +42,6 @@ MAIN_MENU = ReplyKeyboardMarkup(
 def is_admin(user_id: int) -> bool:
     from config import ADMIN_IDS
     return user_id == OWNER_ID or user_id in ADMIN_IDS
-
-
-async def banned_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    if not update.effective_user:
-        return False
-    u = db.get_user(update.effective_user.id)
-    if u and u.get("is_banned"):
-        if update.message:
-            await update.message.reply_text("🚫 You are banned from using this bot.")
-        return True
-    return False
 
 
 async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -74,6 +57,8 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await cmd_withdrawstats(update, context)
     elif text == "💰 Fund Check":
         await cmd_fundcheck(update, context)
+    elif text == "📥 Download Sheet":
+        await cmd_downloadsheet(update, context)
     elif text == "🔙 Main Menu":
         await update.message.reply_text("Back to main menu.", reply_markup=MAIN_MENU)
 
@@ -82,10 +67,11 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if is_admin(user_id):
         msg = (
-            "🛠 *Admin Commands*\n\n"
+            "🛠 *Instant Money Bux — Admin Commands*\n\n"
             "/admin — Open admin panel\n"
             "/createtask — Create a new task\n"
             "/deltask <id> — Delete a task\n"
+            "/downloadsheet — Download all task submissions as CSV\n"
             "/ban <user_id> — Ban a user\n"
             "/unban <user_id> — Unban a user\n"
             "/taskstats — Task completion stats\n"
@@ -99,8 +85,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         msg = (
-            "📱 *Available Commands*\n\n"
-            "/start — Start / return to menu\n"
+            "💸 *Instant Money Bux*\n\n"
+            "/start — Return to main menu\n"
             "/balance — Check your balance\n"
             "/refer — Get your referral link\n"
             "/withdraw — Request a withdrawal\n"
@@ -140,6 +126,7 @@ def main():
     app.add_handler(CommandHandler("fundcheck", cmd_fundcheck))
     app.add_handler(CommandHandler("fakerefer", cmd_fakerefer))
     app.add_handler(CommandHandler("deltask", cmd_deltask))
+    app.add_handler(CommandHandler("downloadsheet", cmd_downloadsheet))
 
     app.add_handler(create_task_conv)
     app.add_handler(livereport_conv)
@@ -147,11 +134,12 @@ def main():
     app.add_handler(task_conv_handler)
     app.add_handler(withdraw_conv_handler)
 
-    app.add_handler(CallbackQueryHandler(handle_submission_callback, pattern=r"^(approve|reject)_\d+$"))
     app.add_handler(CallbackQueryHandler(handle_withdrawal_callback, pattern=r"^w(approve|reject)_\d+$"))
 
     app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.Regex("^(📋 List Tasks|📊 Task Stats|👥 User Stats|💸 Withdraw Stats|💰 Fund Check|🔙 Main Menu|📡 Live Report)$"),
+        filters.TEXT & ~filters.COMMAND & filters.Regex(
+            "^(📋 List Tasks|📊 Task Stats|👥 User Stats|💸 Withdraw Stats|💰 Fund Check|🔙 Main Menu|📡 Live Report|📥 Download Sheet)$"
+        ),
         handle_admin_menu,
     ))
 
@@ -162,7 +150,7 @@ def main():
 
     app.add_error_handler(error_handler)
 
-    logger.info("Bot is starting...")
+    logger.info("Instant Money Bux bot is starting...")
     app.run_polling(drop_pending_updates=True)
 
 
