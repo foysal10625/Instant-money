@@ -34,6 +34,8 @@ def init_db():
             title TEXT NOT NULL,
             description TEXT,
             reward REAL NOT NULL,
+            task_type TEXT DEFAULT 'instagram',
+            task_password TEXT DEFAULT '',
             created_by INTEGER,
             is_active INTEGER DEFAULT 1
         )
@@ -44,6 +46,9 @@ def init_db():
             submission_id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
             task_id INTEGER,
+            acc_username TEXT,
+            acc_password TEXT,
+            twofa_key TEXT,
             proof TEXT,
             status TEXT DEFAULT 'pending',
             approved_by INTEGER,
@@ -98,9 +103,25 @@ def init_db():
         )
     """)
 
+    # Migrate existing tables — safely add columns if not present
+    _safe_add_column(c, "tasks", "task_type", "TEXT DEFAULT 'instagram'")
+    _safe_add_column(c, "tasks", "task_password", "TEXT DEFAULT ''")
+    _safe_add_column(c, "submissions", "acc_username", "TEXT DEFAULT ''")
+    _safe_add_column(c, "submissions", "acc_password", "TEXT DEFAULT ''")
+    _safe_add_column(c, "submissions", "twofa_key", "TEXT DEFAULT ''")
+
     conn.commit()
     conn.close()
 
+
+def _safe_add_column(cursor, table: str, column: str, col_def: str):
+    try:
+        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}")
+    except Exception:
+        pass
+
+
+# ── Users ──────────────────────────────────────────────────────────────────────
 
 def get_user(user_id: int):
     conn = get_conn()
@@ -140,6 +161,8 @@ def get_all_users():
     return [dict(r) for r in rows]
 
 
+# ── Tasks ──────────────────────────────────────────────────────────────────────
+
 def get_active_tasks():
     conn = get_conn()
     rows = conn.execute("SELECT * FROM tasks WHERE is_active=1").fetchall()
@@ -154,11 +177,12 @@ def get_task(task_id: int):
     return dict(row) if row else None
 
 
-def create_task(title: str, description: str, reward: float, created_by: int):
+def create_task(title: str, description: str, reward: float, created_by: int,
+                task_type: str = "instagram", task_password: str = ""):
     conn = get_conn()
     c = conn.execute(
-        "INSERT INTO tasks (title, description, reward, created_by) VALUES (?,?,?,?)",
-        (title, description, reward, created_by),
+        "INSERT INTO tasks (title, description, reward, created_by, task_type, task_password) VALUES (?,?,?,?,?,?)",
+        (title, description, reward, created_by, task_type, task_password),
     )
     task_id = c.lastrowid
     conn.commit()
@@ -173,11 +197,15 @@ def delete_task(task_id: int):
     conn.close()
 
 
-def create_submission(user_id: int, task_id: int, proof: str):
+# ── Submissions ────────────────────────────────────────────────────────────────
+
+def create_submission(user_id: int, task_id: int, acc_username: str,
+                      acc_password: str, twofa_key: str):
     conn = get_conn()
     c = conn.execute(
-        "INSERT INTO submissions (user_id, task_id, proof) VALUES (?,?,?)",
-        (user_id, task_id, proof),
+        "INSERT INTO submissions (user_id, task_id, acc_username, acc_password, twofa_key, proof) "
+        "VALUES (?,?,?,?,?,?)",
+        (user_id, task_id, acc_username, acc_password, twofa_key, acc_username),
     )
     sub_id = c.lastrowid
     conn.commit()
@@ -190,18 +218,6 @@ def get_submission(submission_id: int):
     row = conn.execute("SELECT * FROM submissions WHERE submission_id=?", (submission_id,)).fetchone()
     conn.close()
     return dict(row) if row else None
-
-
-def get_pending_submissions():
-    conn = get_conn()
-    rows = conn.execute(
-        "SELECT s.*, u.username, t.title, t.reward FROM submissions s "
-        "JOIN users u ON s.user_id=u.user_id "
-        "JOIN tasks t ON s.task_id=t.task_id "
-        "WHERE s.status='pending'"
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
 
 
 def update_submission_status(submission_id: int, status: str, approved_by: int):
@@ -221,17 +237,64 @@ def mark_submission_logged(submission_id: int):
     conn.close()
 
 
-def get_approved_submissions():
+def get_approved_submissions(task_type: str = None):
+    conn = get_conn()
+    if task_type:
+        rows = conn.execute(
+            "SELECT s.*, u.username as tg_username, t.title, t.reward, t.task_type "
+            "FROM submissions s "
+            "JOIN users u ON s.user_id=u.user_id "
+            "JOIN tasks t ON s.task_id=t.task_id "
+            "WHERE s.status='approved' AND t.task_type=?",
+            (task_type,)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT s.*, u.username as tg_username, t.title, t.reward, t.task_type "
+            "FROM submissions s "
+            "JOIN users u ON s.user_id=u.user_id "
+            "JOIN tasks t ON s.task_id=t.task_id "
+            "WHERE s.status='approved'"
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_approved_acc_usernames():
+    """Returns set of all submitted acc_usernames (for live ID matching)."""
     conn = get_conn()
     rows = conn.execute(
-        "SELECT s.*, u.username, t.title FROM submissions s "
+        "SELECT DISTINCT acc_username FROM submissions WHERE status='approved' AND acc_username != ''"
+    ).fetchall()
+    conn.close()
+    return {r["acc_username"] for r in rows}
+
+
+def get_submissions_by_acc_username(acc_username: str):
+    """Find submissions whose acc_username matches a live ID."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT s.user_id, s.task_id, s.submission_id, u.username as tg_username, t.reward "
+        "FROM submissions s "
         "JOIN users u ON s.user_id=u.user_id "
         "JOIN tasks t ON s.task_id=t.task_id "
-        "WHERE s.status='approved'"
+        "WHERE s.acc_username=? AND s.status='approved'",
+        (acc_username,),
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
+
+def is_acc_username_taken(acc_username: str) -> bool:
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT 1 FROM submissions WHERE acc_username=?", (acc_username,)
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
+# ── Withdrawals ────────────────────────────────────────────────────────────────
 
 def create_withdrawal(user_id: int, amount: float, method: str, details: str):
     conn = get_conn()
@@ -278,6 +341,8 @@ def get_user_withdrawals(user_id: int):
     return [dict(r) for r in rows]
 
 
+# ── Transactions ───────────────────────────────────────────────────────────────
+
 def add_transaction(user_id: int, type_: str, amount: float, description: str):
     conn = get_conn()
     conn.execute(
@@ -287,6 +352,8 @@ def add_transaction(user_id: int, type_: str, amount: float, description: str):
     conn.commit()
     conn.close()
 
+
+# ── Referrals ──────────────────────────────────────────────────────────────────
 
 def create_referral(referrer_id: int, referred_id: int):
     conn = get_conn()
@@ -326,6 +393,20 @@ def get_referrals_by_referrer(referrer_id: int):
     return [dict(r) for r in rows]
 
 
+# ── Live IDs ───────────────────────────────────────────────────────────────────
+
+def add_live_id_match(user_id: int, live_id: str, bonus: float):
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO live_id_matches (user_id, live_id, bonus_added) VALUES (?,?,?)",
+        (user_id, live_id, bonus),
+    )
+    conn.commit()
+    conn.close()
+
+
+# ── Stats ──────────────────────────────────────────────────────────────────────
+
 def get_user_task_count(user_id: int):
     conn = get_conn()
     row = conn.execute(
@@ -352,34 +433,3 @@ def get_all_withdraw_stats():
     rows = conn.execute("SELECT * FROM withdrawals ORDER BY requested_at DESC").fetchall()
     conn.close()
     return [dict(r) for r in rows]
-
-
-def get_live_id_matches_by_live_id(live_id: str):
-    conn = get_conn()
-    rows = conn.execute(
-        "SELECT s.user_id, u.username FROM submissions s "
-        "JOIN users u ON s.user_id=u.user_id "
-        "WHERE s.proof=? AND s.status='approved'",
-        (live_id,),
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-
-def add_live_id_match(user_id: int, live_id: str, bonus: float):
-    conn = get_conn()
-    conn.execute(
-        "INSERT INTO live_id_matches (user_id, live_id, bonus_added) VALUES (?,?,?)",
-        (user_id, live_id, bonus),
-    )
-    conn.commit()
-    conn.close()
-
-
-def get_approved_proof_ids():
-    conn = get_conn()
-    rows = conn.execute(
-        "SELECT DISTINCT proof FROM submissions WHERE status='approved'"
-    ).fetchall()
-    conn.close()
-    return {r["proof"] for r in rows}
