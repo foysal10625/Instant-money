@@ -24,7 +24,9 @@ from handlers.admin import (
     cmd_admin, cmd_ban, cmd_unban, cmd_toggle_tasks,
     cmd_taskstats, cmd_userstats, cmd_withdrawstats, cmd_fundcheck,
     cmd_fakerefer, cmd_list_tasks, cmd_deltask,
+    cmd_toggle_withdraw,
     create_task_conv, delete_task_conv, livereport_conv, download_sheet_conv,
+    balreset_conv, set_min_withdraw_conv,
 )
 
 logging.basicConfig(
@@ -72,6 +74,9 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/livereport — Match live IDs & add balances\n"
             "/ban <user_id> — Ban a user\n"
             "/unban <user_id> — Unban a user\n"
+            "/balreset — Reset a user's balance to $0\n"
+            "/setminwithdraw — Set minimum withdrawal amount\n"
+            "/togglewithdraw — Toggle withdrawal system on/off\n"
             "/taskstats — Task completion stats\n"
             "/userstats — User stats\n"
             "/withdrawstats — Withdrawal stats\n"
@@ -119,6 +124,7 @@ def main():
     app.add_handler(CommandHandler("ban", cmd_ban))
     app.add_handler(CommandHandler("unban", cmd_unban))
     app.add_handler(CommandHandler("toggletasks", cmd_toggle_tasks))
+    app.add_handler(CommandHandler("togglewithdraw", cmd_toggle_withdraw))
     app.add_handler(CommandHandler("taskstats", cmd_taskstats))
     app.add_handler(CommandHandler("userstats", cmd_userstats))
     app.add_handler(CommandHandler("withdrawstats", cmd_withdrawstats))
@@ -127,6 +133,8 @@ def main():
     app.add_handler(CommandHandler("deltask", cmd_deltask))
 
     # Conversation handlers (order matters — most specific first)
+    app.add_handler(balreset_conv)
+    app.add_handler(set_min_withdraw_conv)
     app.add_handler(create_task_conv)
     app.add_handler(delete_task_conv)
     app.add_handler(download_sheet_conv)

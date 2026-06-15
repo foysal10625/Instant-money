@@ -31,7 +31,7 @@ def _get_worksheet(sheet_name: str):
 
         headers = {
             "Instagram IDs": ["User ID", "TG Username", "Task", "Acc Username", "Password", "2FA Key", "Reward ($)", "Date"],
-            "Facebook IDs":  ["User ID", "TG Username", "Task", "Acc Username", "Password", "2FA Key", "Reward ($)", "Date"],
+            "Facebook IDs":  ["UID", "Password", "2FA Key", "Date"],
         }
 
         try:
@@ -50,22 +50,40 @@ def _get_worksheet(sheet_name: str):
 
 def log_submission(user_id: int, tg_username: str, task_title: str, task_type: str,
                    acc_username: str, acc_password: str, twofa_key: str, reward: float) -> bool:
-    sheet_name = "Instagram IDs" if task_type == "instagram" else "Facebook IDs"
-    ws = _get_worksheet(sheet_name)
-    if ws is None:
-        return False
-    try:
-        ws.append_row([
-            user_id,
-            tg_username or "",
-            task_title,
-            acc_username,
-            acc_password,
-            twofa_key,
-            reward,
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        ])
-        return True
-    except Exception as e:
-        logger.warning(f"Sheet write failed ({sheet_name}): {e}")
-        return False
+    if task_type == "facebook":
+        sheet_name = "Facebook IDs"
+        ws = _get_worksheet(sheet_name)
+        if ws is None:
+            return False
+        try:
+            # Facebook format: UID - Password - 2FA Key - Date
+            ws.append_row([
+                acc_username,   # UID
+                acc_password,   # Password
+                twofa_key,      # 2FA Key
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            ])
+            return True
+        except Exception as e:
+            logger.warning(f"Sheet write failed ({sheet_name}): {e}")
+            return False
+    else:
+        sheet_name = "Instagram IDs"
+        ws = _get_worksheet(sheet_name)
+        if ws is None:
+            return False
+        try:
+            ws.append_row([
+                user_id,
+                tg_username or "",
+                task_title,
+                acc_username,
+                acc_password,
+                twofa_key,
+                reward,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            ])
+            return True
+        except Exception as e:
+            logger.warning(f"Sheet write failed ({sheet_name}): {e}")
+            return False

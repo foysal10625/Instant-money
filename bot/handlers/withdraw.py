@@ -1,8 +1,9 @@
 import logging
+import config as config_module
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 import database as db
-from config import OWNER_ID, ADMIN_IDS, MIN_WITHDRAW, WITHDRAW_METHODS
+from config import OWNER_ID, ADMIN_IDS, WITHDRAW_METHODS
 
 logger = logging.getLogger(__name__)
 
@@ -27,17 +28,25 @@ async def start_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🚫 You are banned.")
         return ConversationHandler.END
 
-    total = u.get("balance", 0) + u.get("referral_bonus", 0)
-    if total < MIN_WITHDRAW:
+    if not config_module.WITHDRAW_SYSTEM_ENABLED:
         await update.message.reply_text(
-            f"❌ Minimum withdrawal is `${MIN_WITHDRAW:.2f}`.\nYour balance: `${total:.4f}`",
+            "❌ Withdrawals are currently disabled. Please check back later.",
+            reply_markup=MAIN_MENU,
+        )
+        return ConversationHandler.END
+
+    min_withdraw = config_module.MIN_WITHDRAW
+    total = u.get("balance", 0) + u.get("referral_bonus", 0)
+    if total < min_withdraw:
+        await update.message.reply_text(
+            f"❌ Minimum withdrawal is `${min_withdraw:.2f}`.\nYour balance: `${total:.4f}`",
             parse_mode="Markdown",
             reply_markup=MAIN_MENU,
         )
         return ConversationHandler.END
 
     await update.message.reply_text(
-        f"💸 *Withdraw*\n\nYour balance: `${total:.4f}`\nMinimum: `${MIN_WITHDRAW:.2f}`\n\nHow much would you like to withdraw?",
+        f"💸 *Withdraw*\n\nYour balance: `${total:.4f}`\nMinimum: `${min_withdraw:.2f}`\n\nHow much would you like to withdraw?",
         parse_mode="Markdown",
         reply_markup=ReplyKeyboardMarkup([["❌ Cancel"]], resize_keyboard=True),
     )
@@ -52,6 +61,7 @@ async def receive_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     u = db.get_user(user.id)
     total = u.get("balance", 0) + u.get("referral_bonus", 0)
+    min_withdraw = config_module.MIN_WITHDRAW
 
     try:
         amount = float(update.message.text.strip())
@@ -59,8 +69,8 @@ async def receive_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Please enter a valid number.")
         return AMOUNT
 
-    if amount < MIN_WITHDRAW:
-        await update.message.reply_text(f"❌ Minimum is ${MIN_WITHDRAW:.2f}. Try again.")
+    if amount < min_withdraw:
+        await update.message.reply_text(f"❌ Minimum is ${min_withdraw:.2f}. Try again.")
         return AMOUNT
 
     if amount > total:
@@ -197,7 +207,6 @@ async def handle_withdrawal_callback(update: Update, context: ContextTypes.DEFAU
 
     else:
         db.update_withdrawal_status(wid, "rejected", admin_id)
-        u = db.get_user(w["user_id"])
         db.update_user_balance(w["user_id"], w["amount"], "balance")
         db.add_transaction(w["user_id"], "withdrawal_refund", w["amount"], "Withdrawal rejected - refunded")
         try:
@@ -220,9 +229,9 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 withdraw_conv_handler = ConversationHandler(
     entry_points=[MessageHandler(filters.Regex("^💸 Withdraw$"), start_withdraw)],
     states={
-        AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_amount)],
-        METHOD: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_method)],
-        DETAILS: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_details)],
+        AMOUNT:   [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_amount)],
+        METHOD:   [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_method)],
+        DETAILS:  [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_details)],
     },
     fallbacks=[CommandHandler("cancel", cancel), MessageHandler(filters.Regex("^❌ Cancel$"), cancel)],
     allow_reentry=True,

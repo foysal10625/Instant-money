@@ -147,6 +147,17 @@ def update_user_balance(user_id: int, amount: float, field: str = "balance"):
     conn.close()
 
 
+def reset_user_balance(user_id: int):
+    """Reset both balance and referral_bonus to 0 for the given user."""
+    conn = get_conn()
+    conn.execute(
+        "UPDATE users SET balance=0.0, referral_bonus=0.0 WHERE user_id=?",
+        (user_id,),
+    )
+    conn.commit()
+    conn.close()
+
+
 def set_user_banned(user_id: int, banned: bool):
     conn = get_conn()
     conn.execute("UPDATE users SET is_banned=? WHERE user_id=?", (1 if banned else 0, user_id))
@@ -289,6 +300,17 @@ def is_acc_username_taken(acc_username: str) -> bool:
     conn = get_conn()
     row = conn.execute(
         "SELECT 1 FROM submissions WHERE acc_username=?", (acc_username,)
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
+def has_live_id_match(user_id: int, live_id: str) -> bool:
+    """Check whether a live ID has already been credited to this user."""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT 1 FROM live_id_matches WHERE user_id=? AND live_id=?",
+        (user_id, live_id),
     ).fetchone()
     conn.close()
     return row is not None

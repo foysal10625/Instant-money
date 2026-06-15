@@ -35,6 +35,8 @@ LIVE_REPORT_FILE = 30
 DOWNLOAD_CHOICE = 40
 DOWNLOAD_TYPE_CHOICE = 41
 DELETE_TASK_SELECT = 50
+BALRESET_USERID = 60
+SET_MIN_WITHDRAW = 70
 
 
 def is_owner(user_id: int) -> bool:
@@ -116,6 +118,111 @@ async def cmd_toggle_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Task system is now *{state}*.", parse_mode="Markdown")
 
 
+# ── Toggle Withdraw ────────────────────────────────────────────────────────────
+
+async def cmd_toggle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Not authorized.")
+        return
+    config.WITHDRAW_SYSTEM_ENABLED = not config.WITHDRAW_SYSTEM_ENABLED
+    state = "ENABLED ✅" if config.WITHDRAW_SYSTEM_ENABLED else "DISABLED ❌"
+    await update.message.reply_text(f"Withdrawal system is now *{state}*.", parse_mode="Markdown")
+
+
+# ── Set Min Withdraw ───────────────────────────────────────────────────────────
+
+async def start_set_min_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Not authorized.")
+        return ConversationHandler.END
+    await update.message.reply_text(
+        f"💵 *Set Minimum Withdrawal*\n\n"
+        f"Current minimum: `${config.MIN_WITHDRAW:.2f}`\n\n"
+        f"Enter the new minimum withdrawal amount:",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardMarkup([["❌ Cancel"]], resize_keyboard=True),
+    )
+    return SET_MIN_WITHDRAW
+
+
+async def receive_min_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == "❌ Cancel":
+        await update.message.reply_text("Cancelled.", reply_markup=ADMIN_MENU)
+        return ConversationHandler.END
+    try:
+        new_min = float(update.message.text.strip())
+        if new_min < 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("Please enter a valid positive number (e.g. 2.00).")
+        return SET_MIN_WITHDRAW
+    config.MIN_WITHDRAW = new_min
+    await update.message.reply_text(
+        f"✅ Minimum withdrawal set to `${new_min:.2f}`.",
+        parse_mode="Markdown",
+        reply_markup=ADMIN_MENU,
+    )
+    return ConversationHandler.END
+
+
+# ── Balance Reset ──────────────────────────────────────────────────────────────
+
+async def start_balreset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Not authorized.")
+        return ConversationHandler.END
+    await update.message.reply_text(
+        "🔄 *Balance Reset*\n\nEnter the *User ID* of the user whose balance you want to reset to $0.00:",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardMarkup([["❌ Cancel"]], resize_keyboard=True),
+    )
+    return BALRESET_USERID
+
+
+async def receive_balreset_userid(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == "❌ Cancel":
+        await update.message.reply_text("Cancelled.", reply_markup=ADMIN_MENU)
+        return ConversationHandler.END
+
+    try:
+        target_id = int(update.message.text.strip())
+    except ValueError:
+        await update.message.reply_text("Invalid User ID. Please enter a number.")
+        return BALRESET_USERID
+
+    u = db.get_user(target_id)
+    if not u:
+        await update.message.reply_text(
+            f"❌ No user found with ID `{target_id}`.",
+            parse_mode="Markdown",
+        )
+        return BALRESET_USERID
+
+    old_bal = u.get("balance", 0) + u.get("referral_bonus", 0)
+    db.reset_user_balance(target_id)
+    db.add_transaction(target_id, "balance_reset", -old_bal, f"Balance reset by admin {update.effective_user.id}")
+
+    name = f"@{u['username']}" if u.get("username") else str(target_id)
+    await update.message.reply_text(
+        f"✅ *Balance Reset*\n\n"
+        f"User: {name} (`{target_id}`)\n"
+        f"Previous balance: `${old_bal:.4f}`\n"
+        f"New balance: `$0.0000`",
+        parse_mode="Markdown",
+        reply_markup=ADMIN_MENU,
+    )
+
+    try:
+        await context.bot.send_message(
+            target_id,
+            "⚠️ Your balance has been reset to $0.00 by an admin.",
+        )
+    except Exception:
+        pass
+
+    return ConversationHandler.END
+
+
 # ── Stats Commands ─────────────────────────────────────────────────────────────
 
 async def cmd_taskstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -162,6 +269,8 @@ async def cmd_withdrawstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rejected = [w for w in all_w if w["status"] == "rejected"]
     await update.message.reply_text(
         f"💸 *Withdrawal Stats*\n\n"
+        f"Withdraw system: {'✅ ON' if config.WITHDRAW_SYSTEM_ENABLED else '❌ OFF'}\n"
+        f"Minimum: `${config.MIN_WITHDRAW:.2f}`\n\n"
         f"Pending: `{len(pending)}` (${sum(w['amount'] for w in pending):.4f})\n"
         f"Approved: `{len(approved)}` (${sum(w['amount'] for w in approved):.4f})\n"
         f"Rejected: `{len(rejected)}` (${sum(w['amount'] for w in rejected):.4f})",
@@ -409,7 +518,7 @@ async def receive_download_type(update: Update, context: ContextTypes.DEFAULT_TY
     if sheet_type == "full":
         writer.writerow([
             "Sub ID", "User ID", "TG Username", "Task", "Platform",
-            "Acc Username", "Password", "2FA Key", "Reward ($)", "Date"
+            "Acc Username / UID", "Password", "2FA Key", "Reward ($)", "Date"
         ])
         for s in subs:
             writer.writerow([
@@ -427,7 +536,12 @@ async def receive_download_type(update: Update, context: ContextTypes.DEFAULT_TY
         filename = f"imb_full_{platform_label}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         caption = f"📄 *Full Sheet — {platform_label}*\nTotal records: `{len(subs)}`"
     else:
-        writer.writerow(["Acc Username", "Password", "2FA Key"])
+        # Facebook credentials: UID - Password - 2FA
+        # Instagram credentials: Username - Password - 2FA
+        if platform == "facebook":
+            writer.writerow(["UID", "Password", "2FA Key"])
+        else:
+            writer.writerow(["Acc Username", "Password", "2FA Key"])
         for s in subs:
             writer.writerow([
                 s.get("acc_username", ""),
@@ -458,8 +572,9 @@ async def start_livereport(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📡 *Live ID Report*\n\n"
         "Upload a file (CSV, XLSX, or TXT) containing confirmed live account usernames / UIDs.\n\n"
-        "The bot will match them against submitted account usernames and add the task reward to each matched user's balance.\n\n"
-        "💡 *Tip:* Use *📥 Download Sheet → Credentials Only* to see all submitted usernames.",
+        "The bot will match them against submitted accounts, add the reward to each matched user's balance "
+        "*one by one*, and send each user a notification per matched account.\n\n"
+        "💡 Already-credited IDs will be automatically skipped.",
         parse_mode="Markdown",
         reply_markup=ReplyKeyboardMarkup([["❌ Cancel"]], resize_keyboard=True),
     )
@@ -512,49 +627,67 @@ async def receive_livereport_file(update: Update, context: ContextTypes.DEFAULT_
 
     all_acc_usernames = db.get_approved_acc_usernames()
 
-    matched_users = {}   # user_id → {username, subs: [{submission_id, reward}]}
-    for live_id in live_ids:
-        if live_id in all_acc_usernames:
-            subs = db.get_submissions_by_acc_username(live_id)
-            for s in subs:
-                uid = s["user_id"]
-                if uid not in matched_users:
-                    matched_users[uid] = {"tg_username": s["tg_username"], "reward": 0.0, "ids": []}
-                matched_users[uid]["reward"] += s["reward"]
-                matched_users[uid]["ids"].append(live_id)
-
+    total_credited = 0
+    total_skipped = 0
+    total_unmatched = 0
     total_bonus = 0.0
-    for user_id, info in matched_users.items():
-        reward = info["reward"]
-        db.update_user_balance(user_id, reward, "balance")
-        db.add_transaction(user_id, "live_id_bonus", reward, "Live ID match — balance added")
-        total_bonus += reward
-        for lid in info["ids"]:
-            db.add_live_id_match(user_id, lid, reward)
-        try:
-            await context.bot.send_message(
-                user_id,
-                f"🎉 Your account was verified as live!\n"
-                f"💰 `${reward:.4f}` has been added to your balance.",
-                parse_mode="Markdown",
-            )
-        except Exception:
-            pass
+    matched_summary = {}  # user_id → count of live IDs credited
 
-    total_matched_ids = sum(len(info["ids"]) for info in matched_users.values())
+    for live_id in live_ids:
+        if live_id not in all_acc_usernames:
+            total_unmatched += 1
+            continue
+
+        subs = db.get_submissions_by_acc_username(live_id)
+        for s in subs:
+            uid = s["user_id"]
+
+            # Skip if this exact live ID was already credited to this user
+            if db.has_live_id_match(uid, live_id):
+                total_skipped += 1
+                continue
+
+            reward = s["reward"]
+
+            # Add balance and record the match
+            db.update_user_balance(uid, reward, "balance")
+            db.add_transaction(uid, "live_id_bonus", reward, f"Live ID match: {live_id}")
+            db.add_live_id_match(uid, live_id, reward)
+            total_bonus += reward
+            total_credited += 1
+
+            if uid not in matched_summary:
+                matched_summary[uid] = {"tg_username": s["tg_username"], "count": 0, "total": 0.0}
+            matched_summary[uid]["count"] += 1
+            matched_summary[uid]["total"] += reward
+
+            # Send individual notification per live account
+            try:
+                await context.bot.send_message(
+                    uid,
+                    f"🎉 *Account Verified as Live!*\n\n"
+                    f"Account: `{live_id}`\n"
+                    f"💰 `${reward:.4f}` has been added to your balance.\n\n"
+                    f"Check /balance to see your updated balance.",
+                    parse_mode="Markdown",
+                )
+            except Exception:
+                pass
+
     summary = [
         "📡 *Live ID Report Summary*\n",
         f"IDs uploaded: `{len(live_ids)}`",
-        f"Matched IDs: `{total_matched_ids}`",
-        f"Matched users: `{len(matched_users)}`",
+        f"Newly credited: `{total_credited}`",
+        f"Already credited (skipped): `{total_skipped}`",
+        f"Unmatched: `{total_unmatched}`",
         f"Total balance added: `${total_bonus:.4f}`",
-        f"Unmatched IDs: `{len(live_ids) - total_matched_ids}`",
+        f"Users notified: `{len(matched_summary)}`",
     ]
-    if matched_users:
-        summary.append("\n*Matched Users:*")
-        for uid, info in list(matched_users.items())[:20]:
+    if matched_summary:
+        summary.append("\n*Credited Users:*")
+        for uid, info in list(matched_summary.items())[:20]:
             name = f"@{info['tg_username']}" if info.get("tg_username") else str(uid)
-            summary.append(f"{name}: `{len(info['ids'])}` ID(s) → `${info['reward']:.4f}`")
+            summary.append(f"{name}: `{info['count']}` account(s) → `${info['total']:.4f}`")
 
     await update.message.reply_text("\n".join(summary), parse_mode="Markdown", reply_markup=ADMIN_MENU)
     return ConversationHandler.END
@@ -631,11 +764,11 @@ create_task_conv = ConversationHandler(
         CommandHandler("createtask", start_create_task),
     ],
     states={
-        CREATE_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_task_title)],
-        CREATE_DESC:  [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_task_desc)],
+        CREATE_TITLE:  [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_task_title)],
+        CREATE_DESC:   [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_task_desc)],
         CREATE_REWARD: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_task_reward)],
-        CREATE_TYPE:  [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_task_type)],
-        CREATE_PASS:  [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_task_password)],
+        CREATE_TYPE:   [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_task_type)],
+        CREATE_PASS:   [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_task_password)],
     },
     fallbacks=[CommandHandler("cancel", cancel_admin), MessageHandler(filters.Regex("^❌ Cancel$"), cancel_admin)],
     allow_reentry=True,
@@ -675,6 +808,24 @@ livereport_conv = ConversationHandler(
         LIVE_REPORT_FILE: [
             MessageHandler(filters.Document.ALL | filters.TEXT & ~filters.COMMAND, receive_livereport_file)
         ],
+    },
+    fallbacks=[CommandHandler("cancel", cancel_admin), MessageHandler(filters.Regex("^❌ Cancel$"), cancel_admin)],
+    allow_reentry=True,
+)
+
+balreset_conv = ConversationHandler(
+    entry_points=[CommandHandler("balreset", start_balreset)],
+    states={
+        BALRESET_USERID: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_balreset_userid)],
+    },
+    fallbacks=[CommandHandler("cancel", cancel_admin), MessageHandler(filters.Regex("^❌ Cancel$"), cancel_admin)],
+    allow_reentry=True,
+)
+
+set_min_withdraw_conv = ConversationHandler(
+    entry_points=[CommandHandler("setminwithdraw", start_set_min_withdraw)],
+    states={
+        SET_MIN_WITHDRAW: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_min_withdraw)],
     },
     fallbacks=[CommandHandler("cancel", cancel_admin), MessageHandler(filters.Regex("^❌ Cancel$"), cancel_admin)],
     allow_reentry=True,
