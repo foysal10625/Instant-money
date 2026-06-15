@@ -24,7 +24,7 @@ from handlers.admin import (
     cmd_admin, cmd_ban, cmd_unban, cmd_toggle_tasks,
     cmd_taskstats, cmd_userstats, cmd_withdrawstats, cmd_fundcheck,
     cmd_fakerefer, cmd_list_tasks, cmd_deltask,
-    create_task_conv, livereport_conv, download_sheet_conv,
+    create_task_conv, delete_task_conv, livereport_conv, download_sheet_conv,
 )
 
 logging.basicConfig(
@@ -128,6 +128,7 @@ def main():
 
     # Conversation handlers (order matters — most specific first)
     app.add_handler(create_task_conv)
+    app.add_handler(delete_task_conv)
     app.add_handler(download_sheet_conv)
     app.add_handler(livereport_conv)
     app.add_handler(broadcast_conv)

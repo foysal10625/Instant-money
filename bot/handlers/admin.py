@@ -13,10 +13,10 @@ logger = logging.getLogger(__name__)
 ADMIN_MENU = ReplyKeyboardMarkup(
     [
         ["➕ Create Task", "📋 List Tasks"],
-        ["📊 Task Stats", "👥 User Stats"],
-        ["💸 Withdraw Stats", "💰 Fund Check"],
-        ["📡 Live Report", "📥 Download Sheet"],
-        ["🔙 Main Menu"],
+        ["🗑 Delete Task", "📊 Task Stats"],
+        ["👥 User Stats", "💸 Withdraw Stats"],
+        ["💰 Fund Check", "📡 Live Report"],
+        ["📥 Download Sheet", "🔙 Main Menu"],
     ],
     resize_keyboard=True,
 )
@@ -34,6 +34,7 @@ CREATE_PASS = 24
 LIVE_REPORT_FILE = 30
 DOWNLOAD_CHOICE = 40
 DOWNLOAD_TYPE_CHOICE = 41
+DELETE_TASK_SELECT = 50
 
 
 def is_owner(user_id: int) -> bool:
@@ -564,6 +565,64 @@ async def cancel_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+# ── Delete Task Conversation ───────────────────────────────────────────────────
+
+async def start_delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Not authorized.")
+        return ConversationHandler.END
+
+    tasks = db.get_active_tasks()
+    if not tasks:
+        await update.message.reply_text("No active tasks to delete.", reply_markup=ADMIN_MENU)
+        return ConversationHandler.END
+
+    context.user_data["delete_tasks_map"] = {}
+    buttons = []
+    for t in tasks:
+        ttype = "📸" if t.get("task_type") == "instagram" else "📘"
+        label = f"{ttype} {t['title']} (${t['reward']:.4f})"
+        context.user_data["delete_tasks_map"][label] = t
+        buttons.append([label])
+    buttons.append(["❌ Cancel"])
+
+    await update.message.reply_text(
+        "🗑 *Delete Task*\n\nSelect the task you want to delete:",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardMarkup(buttons, resize_keyboard=True),
+    )
+    return DELETE_TASK_SELECT
+
+
+async def confirm_delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+
+    if text == "❌ Cancel":
+        await update.message.reply_text("Cancelled.", reply_markup=ADMIN_MENU)
+        return ConversationHandler.END
+
+    tasks_map = context.user_data.get("delete_tasks_map", {})
+    task = tasks_map.get(text)
+
+    if not task:
+        await update.message.reply_text("Please select a task from the list.")
+        return DELETE_TASK_SELECT
+
+    db.delete_task(task["task_id"])
+
+    platform = "Instagram" if task.get("task_type") == "instagram" else "Facebook"
+    await update.message.reply_text(
+        f"✅ *Task Deleted*\n\n"
+        f"Title: *{task['title']}*\n"
+        f"Platform: {platform}\n"
+        f"Reward: `${task['reward']:.4f}`\n\n"
+        f"The task has been removed and users can no longer select it.",
+        parse_mode="Markdown",
+        reply_markup=ADMIN_MENU,
+    )
+    return ConversationHandler.END
+
+
 # ── Conversation Handlers ──────────────────────────────────────────────────────
 
 create_task_conv = ConversationHandler(
@@ -590,6 +649,18 @@ download_sheet_conv = ConversationHandler(
     states={
         DOWNLOAD_CHOICE:      [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_download_platform)],
         DOWNLOAD_TYPE_CHOICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_download_type)],
+    },
+    fallbacks=[CommandHandler("cancel", cancel_admin), MessageHandler(filters.Regex("^❌ Cancel$"), cancel_admin)],
+    allow_reentry=True,
+)
+
+delete_task_conv = ConversationHandler(
+    entry_points=[
+        MessageHandler(filters.Regex("^🗑 Delete Task$"), start_delete_task),
+        CommandHandler("deletetask", start_delete_task),
+    ],
+    states={
+        DELETE_TASK_SELECT: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_delete_task)],
     },
     fallbacks=[CommandHandler("cancel", cancel_admin), MessageHandler(filters.Regex("^❌ Cancel$"), cancel_admin)],
     allow_reentry=True,
