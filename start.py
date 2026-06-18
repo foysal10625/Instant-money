@@ -1,7 +1,6 @@
 import threading
 import os
 from flask import Flask
-import bot  # your bot.py import
 
 app = Flask(__name__)
 
@@ -10,9 +9,11 @@ def health():
     return "OK", 200
 
 def run_bot():
+    # run your bot script
     os.system("python bot.py")
 
 if __name__ == "__main__":
-    # Run bot in separate thread
+    # bot run in background thread
     threading.Thread(target=run_bot).start()
+    # flask server for Render health check
     app.run(host="0.0.0.0", port=10000)
