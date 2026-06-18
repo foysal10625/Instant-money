@@ -2,12 +2,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY bot/requirements.txt .
 RUN pip install -r requirements.txt
 
-# Flask for health check
-RUN pip install flask
+COPY bot/ .
 
-COPY . .
+CMD ["python", "bot.py"]
 
-CMD ["python", "start.py"]
